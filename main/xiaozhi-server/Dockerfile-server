@@ -1,0 +1,33 @@
+# 本地可独立构建的 server 镜像。
+# 使用 Python 3.11 以兼容当前 PowerMem 依赖。
+FROM docker.m.daocloud.io/library/python:3.11-slim
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONIOENCODING=utf-8 \
+    PIP_DEFAULT_TIMEOUT=120
+
+WORKDIR /opt/xiaozhi-esp32-server
+
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libopus0 ffmpeg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+# 当前方案使用阿里百炼远端 ASR，不使用 Vosk；vosk==0.3.45 在部分平台无可用 wheel。
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set global.trusted-host mirrors.aliyun.com && \
+    pip config set global.timeout 180 && \
+    pip config set install.retries 5 && \
+    python -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    grep -v '^vosk==' requirements.txt > /tmp/requirements-docker.txt && \
+    python -m pip install --no-cache-dir -r /tmp/requirements-docker.txt --default-timeout=120 --retries 5
+
+COPY . .
+
+# 启动应用
+CMD ["python", "app.py"]

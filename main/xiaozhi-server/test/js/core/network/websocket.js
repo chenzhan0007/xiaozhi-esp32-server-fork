@@ -173,11 +173,11 @@ export class WebSocketHandler {
 
             // 句子结束时不清除动画，等待下一个句子或最终停止
         } else if (message.state === 'stop') {
-            log('服务器语音传输结束，清空所有音频缓冲', 'info');
-
-            // 清空所有音频缓冲并停止播放
+            log('服务器语音传输结束，等待已接收音频播放完成', 'info');
             const audioPlayer = getAudioPlayer();
-            audioPlayer.clearAllAudio();
+            if (audioPlayer.streamingContext) {
+                audioPlayer.streamingContext.endOfStream = true;
+            }
 
             this.isRemoteSpeaking = false;
             if (this.onRecordButtonStateChange) {

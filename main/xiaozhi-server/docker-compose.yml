@@ -1,9 +1,10 @@
 # Docker安装Server
-
-version: '3'
 services:
   xiaozhi-esp32-server:
-    image: ghcr.nju.edu.cn/xinnan-tech/xiaozhi-esp32-server:server_latest
+    image: xiaozhi-esp32-server-local:latest
+    build:
+      context: .
+      dockerfile: Dockerfile-server
     container_name: xiaozhi-esp32-server
     restart: always
     security_opt:
@@ -18,5 +19,6 @@ services:
     volumes:
       # 配置文件目录
       - ./data:/opt/xiaozhi-esp32-server/data
-      # 模型文件挂接，很重要
-      - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt
+      # 当前使用阿里百炼远端ASR，不需要挂载本地SenseVoice模型。
+      # 如果后续切回本地FunASR，再恢复下面的模型挂载：
+      # - ./models/SenseVoiceSmall/model.pt:/opt/xiaozhi-esp32-server/models/SenseVoiceSmall/model.pt

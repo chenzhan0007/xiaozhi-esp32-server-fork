@@ -1,0 +1,22 @@
+.venv
+__pycache__
+*.pyc
+.DS_Store
+
+# 本地运行数据和密钥配置通过 compose volume 挂载，不打进镜像。
+data/
+tmp/
+
+# 测试页仅本地调试使用，不随 server 镜像发布。
+test/
+
+# 本方案使用阿里百炼远端 ASR，不需要本地大模型文件。
+models/SenseVoiceSmall/model.pt
+models/sherpa-onnx*
+asr-models/
+
+# 运行时音频和上传文件。
+audio_ref/
+music/
+mysql/
+uploadfile/

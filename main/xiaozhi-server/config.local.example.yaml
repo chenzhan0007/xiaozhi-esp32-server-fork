@@ -1,0 +1,97 @@
+# 本文件是本地/单服务部署的配置示例，不会被程序自动读取。
+#
+# 使用方式：
+# 1. 复制本文件到 `main/xiaozhi-server/data/.config.yaml`
+# 2. 将 `你的阿里百炼API_KEY` 替换为真实 API Key
+# 3. 本地测试时可使用 127.0.0.1 地址；服务器部署时改成设备可访问的公网/局域网地址
+#
+# 说明：
+# - `config.yaml` 是项目默认配置，不建议直接修改。
+# - `data/.config.yaml` 是用户覆盖配置，程序会优先读取它。
+# - `data/` 目录被 `.gitignore` 忽略，用来存放密钥、运行数据和本地持久化文件。
+# - `data/bin/` 不是必须目录；只有做 OTA 固件下载/升级时才需要手动放入 `.bin` 固件文件。
+# - PowerMem 使用 SQLite 时，相关本地数据库文件也会生成在运行数据目录中。
+#
+server:
+  # 本地测试地址；部署到局域网/公网后再替换为设备可访问的 IP 或域名。
+  websocket: ws://127.0.0.1:8000/xiaozhi/v1/
+  vision_explain: http://127.0.0.1:8003/mcp/vision/explain
+
+selected_module:
+  VAD: SileroVAD
+  ASR: AliyunBLStreamASR
+  LLM: AliLLM
+  TTS: AliBLTTS
+  Memory: powermem
+  Intent: nointent
+
+xiaozhi:
+  audio_params:
+    format: opus
+    sample_rate: 16000
+    channels: 1
+    frame_duration: 60
+
+# 保留最近 N 轮上下文的配置会在后续改造中启用。
+max_dialogue_turns: 10
+
+ASR:
+  AliyunBLStreamASR:
+    type: aliyunbl_stream
+    api_key: 你的阿里百炼API_KEY
+    # 阿里百炼实时 ASR 模型。若需多语种可切回 paraformer-realtime-v2。
+    model: fun-asr-realtime
+    format: pcm
+    sample_rate: 16000
+    output_dir: tmp/
+    disfluency_removal_enabled: false
+    semantic_punctuation_enabled: false
+    max_sentence_silence: 200
+    multi_threshold_mode_enabled: false
+    punctuation_prediction_enabled: true
+    inverse_text_normalization_enabled: true
+
+LLM:
+  AliLLM:
+    type: openai
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model_name: qwen3.6-plus
+    api_key: 你的阿里百炼API_KEY
+    temperature: 0.7
+    max_tokens: 500
+    top_p: 1
+    frequency_penalty: 0
+
+TTS:
+  AliBLTTS:
+    type: alibl_stream
+    api_key: 你的阿里百炼API_KEY
+    # longhan_v3 优先；若控制台未开通或不可用，切换为 longanlang_v3。
+    model: cosyvoice-v3-flash
+    voice: longhan_v3
+    output_dir: tmp/
+
+Memory:
+  powermem:
+    type: powermem
+    enable_user_profile: false
+    llm:
+      provider: openai
+      config:
+        api_key: 你的阿里百炼API_KEY
+        # 长期记忆抽取/总结使用中档低成本模型，兼顾效果和费用。
+        model: qwen3.5-flash
+        openai_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    embedder:
+      provider: openai
+      config:
+        api_key: 你的阿里百炼API_KEY
+        model: text-embedding-v4
+        openai_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    vector_store:
+      provider: sqlite
+      config: {}
+
+Intent:
+  nointent:
+    type: nointent

@@ -219,7 +219,13 @@ export class AudioRecorder {
                 return false;
             }
             log('请至少录制1-2秒音频以确保收集足够的数据', 'info');
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } });
+            let stream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } });
+            } catch (error) {
+                log(`使用指定音频参数打开麦克风失败: ${error.name || ''} ${error.message}，尝试使用默认麦克风参数`, 'warning');
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            }
             this.audioContext = this.getAudioContext();
             if (this.audioContext.state === 'suspended') {
                 await this.audioContext.resume();
@@ -360,13 +366,19 @@ export async function checkMicrophoneAvailability() {
     }
     try {
         // Try to access microphone
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } });
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } });
+        } catch (error) {
+            log(`指定音频参数不可用: ${error.name || ''} ${error.message}，尝试默认麦克风参数`, 'warning');
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        }
         // Immediately stop all tracks to release microphone
         stream.getTracks().forEach(track => track.stop());
         log('麦克风可用性检查成功', 'success');
         return true;
     } catch (error) {
-        log(`麦克风不可用: ${error.message}`, 'warning');
+        log(`麦克风不可用: ${error.name || ''} ${error.message}`, 'warning');
         return false;
     }
 }
