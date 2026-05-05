@@ -278,6 +278,14 @@ class PromptManager:
                 *args,
                 **kwargs,
             )
+            runtime_config = self.config.get("runtime_config") or {}
+            persona_card = self._build_persona_card(runtime_config)
+            if persona_card:
+                enhanced_prompt += (
+                    "\n\n<ai_persona_card>\n"
+                    + self._format_context_json(persona_card)
+                    + "\n</ai_persona_card>"
+                )
             device_cache_key = f"device_prompt:{device_id}"
             self.cache_manager.set(
                 self.CacheType.DEVICE_PROMPT, device_cache_key, enhanced_prompt
@@ -290,3 +298,98 @@ class PromptManager:
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"构建增强提示词失败: {e}")
             return user_prompt
+
+    def _build_persona_card(self, runtime_config):
+        card = {
+            "style_prompt": runtime_config.get("style_prompt_fragment"),
+            "persona": {
+                "name": runtime_config.get("ai_persona_name"),
+                "identity": runtime_config.get("ai_persona_identity"),
+                "relationship_with_user": runtime_config.get(
+                    "ai_persona_relationship_with_user"
+                ),
+            },
+            "structured_profile": self._sanitize_persona_profile(
+                runtime_config.get("style_profile_json")
+            ),
+            "long_term_instructions": self._normalize_user_instructions(
+                runtime_config.get("user_instructions")
+            ),
+        }
+        has_persona = any(card["persona"].values())
+        if (
+            not card["style_prompt"]
+            and not has_persona
+            and not card["structured_profile"]
+            and not card["long_term_instructions"]
+        ):
+            return None
+        return card
+
+    def _sanitize_persona_profile(self, profile):
+        if not isinstance(profile, dict):
+            return profile
+        ignored_keys = {
+            "change_summary",
+            "expired_information_removed",
+            "metadata",
+            "source",
+            "evidence",
+            "evidence_message_ids",
+            "message_ids",
+            "import_batch_id",
+            "batch_info",
+            "updated_at",
+            "created_at",
+            "stale_info",
+            "expired_info",
+            "stale_context",
+            "expired_context",
+            "uncertain_or_stale_info",
+        }
+        sanitized = {}
+        if "uncertain_context" not in profile and profile.get("uncertain_or_stale_info"):
+            sanitized["uncertain_context"] = profile.get("uncertain_or_stale_info")
+        for key, value in profile.items():
+            if key in ignored_keys:
+                continue
+            if isinstance(value, dict):
+                sanitized[key] = self._sanitize_persona_profile(value)
+            elif isinstance(value, list):
+                sanitized[key] = [
+                    self._sanitize_persona_profile(item)
+                    if isinstance(item, dict)
+                    else item
+                    for item in value
+                ]
+            else:
+                sanitized[key] = value
+        return sanitized
+
+    def _normalize_user_instructions(self, instructions):
+        if not isinstance(instructions, list):
+            return instructions
+        normalized = []
+        for item in instructions:
+            if not isinstance(item, dict):
+                continue
+            if item.get("status", "active") != "active":
+                continue
+            content = str(item.get("content", "")).strip()
+            if not content:
+                continue
+            normalized.append(
+                {
+                    "content": content,
+                    "priority": item.get("priority", "normal"),
+                    "source": item.get("source", "unknown"),
+                }
+            )
+        return normalized
+
+    def _format_context_json(self, context) -> str:
+        import json
+
+        if isinstance(context, str):
+            return context
+        return json.dumps(context, ensure_ascii=False, indent=2)

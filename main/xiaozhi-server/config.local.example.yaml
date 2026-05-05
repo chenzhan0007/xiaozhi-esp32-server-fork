@@ -25,6 +25,11 @@ selected_module:
   Memory: powermem
   Intent: nointent
 
+xiaozhi-manager:
+  enabled: true
+  url: http://127.0.0.1:3001/xiaozhi-manager
+  timeout: 10
+
 xiaozhi:
   audio_params:
     format: opus
@@ -33,7 +38,7 @@ xiaozhi:
     frame_duration: 60
 
 # 保留最近 N 轮上下文的配置会在后续改造中启用。
-max_dialogue_turns: 10
+max_dialogue_turns: 50
 
 ASR:
   AliyunBLStreamASR:

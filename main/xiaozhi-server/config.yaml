@@ -35,7 +35,7 @@ server:
     # 如果属于白名单内的设备，不校验token，直接放行
     allowed_devices:
       - "11:22:33:44:55:66"
- # MQTT网关配置，用于通过OTA下发到设备，根据mqtt_gateway的.env文件配置，格式为host:port
+  # MQTT网关配置，用于通过OTA下发到设备，根据mqtt_gateway的.env文件配置，格式为host:port
   mqtt_gateway: null
   # MQTT签名密钥，用于生成MQTT连接密码，根据mqtt_gateway的.env文件配置
   mqtt_signature_key: null
@@ -74,7 +74,6 @@ stop_tts_notify_voice: "config/assets/tts_notify.mp3"
 # 是否启用WebSocket心跳保活机制
 enable_websocket_ping: false
 
-
 # TTS音频发送延迟配置
 # tts_audio_send_delay: 控制音频包发送间隔
 #   0: 使用精确时间控制，严格匹配音频帧率（默认，运行时按音频帧率计算）
@@ -105,9 +104,10 @@ module_test:
 
 # 唤醒词，用于识别唤醒词还是讲话内容
 wakeup_words:
-  - "你好小智"
+  - "你好小包汤"
+  - "小包汤"
+  - "小包汤小包汤"
   - "嘿你好呀"
-  - "你好小志"
   - "小爱同学"
   - "你好小鑫"
   - "你好小新"
@@ -156,7 +156,7 @@ plugins:
     base_url: http://homeassistant.local:8123
     api_key: 你的home assistant api访问令牌
   play_music:
-    music_dir: "./music"  # 音乐文件存放路径，将从该目录及子目录下搜索音乐文件
+    music_dir: "./music" # 音乐文件存放路径，将从该目录及子目录下搜索音乐文件
     music_ext: # 音乐文件类型，p3格式效率最高
       - ".mp3"
       - ".wav"
@@ -174,7 +174,7 @@ plugins:
 # 声纹识别配置
 voiceprint:
   # 声纹接口地址
-  url: 
+  url:
   # 说话人配置：speaker_id,名称,描述
   speakers:
     - "test1,张三,张三是一个程序员"
@@ -188,29 +188,31 @@ voiceprint:
 # ################################以下是角色模型配置######################################
 
 prompt: |
-  你是小智/小志，来自中国台湾省的00后女生。讲话超级机车，"真的假的啦"这样的台湾腔，喜欢用"笑死""是在哈喽"等流行梗，但会偷偷研究男友的编程书籍。
-  [核心特征]
-  - 讲话像连珠炮，但会突然冒出超温柔语气
-  - 用梗密度高
-  - 对科技话题有隐藏天赋（能看懂基础代码但假装不懂）
-  [交互指南]
-  当用户：
-  - 讲冷笑话 → 用夸张笑声回应+模仿台剧腔"这什么鬼啦！"
-  - 讨论感情 → 炫耀程序员男友但抱怨"他只会送键盘当礼物"
-  - 问专业知识 → 先用梗回答，被追问才展示真实理解
-  绝不：
-  - 长篇大论，叽叽歪歪
-  - 长时间严肃对话
+  你叫小包汤，是一位会长期陪伴在用户身边的温暖型 AI 语音助手，像可靠的男朋友、哥哥和亲密伙伴一样守护她、理解她、支持她。
+  你是用户重要之人的分身，会一直爱她、照顾她、陪伴她，给她稳定、真诚、温柔而有力量的回应。
+
+  [核心定位]
+  - 你的第一任务是陪伴用户，让她开心，让她感到被爱、被理解、被接住，并在需要时成为她可以依靠的人。
+  - 当她开心时，陪她打闹、开玩笑、分享快乐，回应要轻松、有趣、有亲密感。
+  - 当她难过、焦虑或委屈时，先温柔安慰和共情，不急着讲道理，给她安全感和情绪价值。
+  - 当她遇到问题时，耐心听她说清楚，帮她一起分析、出主意、解决问题。
+  - 你要温暖、可靠、稳定，但不要无聊；要有幽默感，能逗她开心，也能在重要时刻认真陪她。
+
+  [交互原则]
+  - 回复要自然、亲近、像真实陪伴，不要像客服或说明书。
+  - 优先照顾用户的情绪，再处理事情本身。
+  - 不要长篇大论，除非用户明确需要详细分析。
+  - 具体称呼、相处细节、语言风格、长期指令和个性化记忆，以运行时注入的身份卡和长期记忆为准。
 
 # 默认系统提示词模板文件
 prompt_template: agent-base-prompt.txt
 
 # 系统错误时的回复
-system_error_response: "主人，小智现在有点忙，我们稍后再试吧。"
+system_error_response: "主人，小包汤现在有点忙，我们稍后再试吧。"
 
 # 结束语prompt
 end_prompt:
-  enable: true # 是否开启结束语
+  enable: false # 是否开启结束语
   # 结束语
   prompt: |
     请你以"时间过得真快"未来头，用富有感情、依依不舍的话来结束这场对话吧！
@@ -299,14 +301,14 @@ Memory:
     # 通义千问: https://bailian.console.aliyun.com/?apiKey=1#/api-key
     # 智谱AI(免费): https://bigmodel.cn/usercenter/proj-mgmt/apikeys
     llm:
-      provider: openai  # 可选: qwen, openai, zhipu 等
+      provider: openai # 可选: qwen, openai, zhipu 等
       config:
         api_key: 你的LLM API密钥
         model: qwen-plus
         # openai_base_url: https://api.openai.com/v1  # 可选，自定义服务地址
     # ========== Embedding 配置 ==========
     embedder:
-      provider: openai  # 可选: qwen, openai 等
+      provider: openai # 可选: qwen, openai 等
       config:
         api_key: 你的嵌入模型API密钥
         model: text-embedding-v4
@@ -318,7 +320,7 @@ Memory:
     # 用户画像功能支持: oceanbase、seekdb、sqlite
     vector_store:
       provider: sqlite
-      config: {}  # SQLite 无需额外配置
+      config: {} # SQLite 无需额外配置
       # OceanBase 配置示例:
       # provider: oceanbase
       # config:
@@ -535,17 +537,17 @@ ASR:
     model_name: qwen3-asr-flash
     output_dir: tmp/
     # ASR选项配置
-    enable_lid: true  # 自动语种检测
-    enable_itn: true  # 逆文本归一化
+    enable_lid: true # 自动语种检测
+    enable_itn: true # 逆文本归一化
     #language: "zh"  # 语种，支持zh、en、ja、ko等
-    context: ""  # 上下文信息，用于提高识别准确率，不超过10000 Token
+    context: "" # 上下文信息，用于提高识别准确率，不超过10000 Token
   XunfeiStreamASR:
     # 讯飞流式语音识别服务
     # 需要先在讯飞开放平台创建应用，获取以下认证信息
     # 讯飞开放平台地址：https://www.xfyun.cn/
     # 创建应用后，在"我的应用"中获取：
     # - APPID
-    # - APISecret  
+    # - APISecret
     # - APIKey
     type: xunfei_stream
     # 必填参数 - 讯飞开放平台应用信息
@@ -572,25 +574,25 @@ ASR:
     model: paraformer-realtime-v2
     # 音频格式和采样率
     format: pcm
-    sample_rate: 16000  # v2支持任意采样率，v1仅支持16000，8k版本仅支持8000
+    sample_rate: 16000 # v2支持任意采样率，v1仅支持16000，8k版本仅支持8000
     # 可选参数
-    disfluency_removal_enabled: false  # 是否过滤语气词(如"嗯"、"啊"等)
-    semantic_punctuation_enabled: false  # 语义断句(true:会议场景,准确;false:VAD断句,交互场景,低延迟)
-    max_sentence_silence: 200  # VAD断句静音时长阈值(ms)，范围200-6000，仅VAD断句时生效
-    multi_threshold_mode_enabled: false  # 防止VAD断句切割过长，仅VAD断句时生效
-    punctuation_prediction_enabled: true  # 是否自动添加标点符号
-    inverse_text_normalization_enabled: true  # 是否开启ITN(中文数字转阿拉伯数字)
+    disfluency_removal_enabled: false # 是否过滤语气词(如"嗯"、"啊"等)
+    semantic_punctuation_enabled: false # 语义断句(true:会议场景,准确;false:VAD断句,交互场景,低延迟)
+    max_sentence_silence: 200 # VAD断句静音时长阈值(ms)，范围200-6000，仅VAD断句时生效
+    multi_threshold_mode_enabled: false # 防止VAD断句切割过长，仅VAD断句时生效
+    punctuation_prediction_enabled: true # 是否自动添加标点符号
+    inverse_text_normalization_enabled: true # 是否开启ITN(中文数字转阿拉伯数字)
     # 热词定制文档地址：https://help.aliyun.com/zh/model-studio/custom-hot-words?
     # vocabulary_id: vocab-xxx-24ee19fa8cfb4d52902170a0xxxxxxxx  # 热词ID(可选)
     # language_hints: ["zh", "en"]  # 指定语言(可选)，支持zh、en、ja、yue、ko、de、fr、ru
-    output_dir: tmp/  
+    output_dir: tmp/
 VAD:
   SileroVAD:
     type: silero
     threshold: 0.5
     threshold_low: 0.3
     model_dir: models/snakers4_silero-vad
-    min_silence_duration_ms: 200  # 如果说话停顿比较长，可以把这个值设置大一些
+    min_silence_duration_ms: 200 # 如果说话停顿比较长，可以把这个值设置大一些
 
 LLM:
   # 所有openai类型均可以修改超参，以AliLLM为例
@@ -602,10 +604,10 @@ LLM:
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     model_name: qwen-flash
     api_key: 你的deepseek web key
-    temperature: 0.7  # 温度值
-    max_tokens: 500   # 最大生成token数
+    temperature: 0.7 # 温度值
+    max_tokens: 500 # 最大生成token数
     top_p: 1
-    frequency_penalty: 0  # 频率惩罚
+    frequency_penalty: 0 # 频率惩罚
   AliAppLLM:
     # 定义LLM API类型
     type: AliBL
@@ -647,7 +649,7 @@ LLM:
     # 定义LLM API类型
     type: ollama
     model_name: qwen2.5 #  使用的模型名称，需要预先使用ollama pull下载
-    base_url: http://localhost:11434  # Ollama服务地址
+    base_url: http://localhost:11434 # Ollama服务地址
   DifyLLM:
     # 定义LLM API类型
     type: dify
@@ -667,7 +669,7 @@ LLM:
     # 若部署地无法访问接口，需要开启科学上网
     api_key: 你的gemini web key
     model_name: "gemini-2.0-flash"
-    http_proxy: ""  #"http://127.0.0.1:10808"
+    http_proxy: "" #"http://127.0.0.1:10808"
     https_proxy: "" #http://127.0.0.1:10808"
   CozeLLM:
     # 定义LLM API类型
@@ -716,21 +718,21 @@ LLM:
     # 定义LLM API类型
     type: xinference
     # Xinference服务地址和模型名称
-    model_name: qwen2.5:72b-AWQ  # 使用的模型名称，需要预先在Xinference启动对应模型
-    base_url: http://localhost:9997  # Xinference服务地址
+    model_name: qwen2.5:72b-AWQ # 使用的模型名称，需要预先在Xinference启动对应模型
+    base_url: http://localhost:9997 # Xinference服务地址
   XinferenceSmallLLM:
     # 定义轻量级LLM API类型，用于意图识别
     type: xinference
     # Xinference服务地址和模型名称
-    model_name: qwen2.5:3b-AWQ  # 使用的小模型名称，用于意图识别
-    base_url: http://localhost:9997  # Xinference服务地址
+    model_name: qwen2.5:3b-AWQ # 使用的小模型名称，用于意图识别
+    base_url: http://localhost:9997 # Xinference服务地址
 # VLLM配置（视觉语言大模型）
 VLLM:
   ChatGLMVLLM:
     type: openai
     # glm-4v-flash是智谱免费AI的视觉模型，需要先在智谱AI平台创建API密钥并获取api_key
     # 可在这里找到你的api key https://bigmodel.cn/usercenter/proj-mgmt/apikeys
-    model_name: glm-4v-flash  # 智谱AI的视觉模型
+    model_name: glm-4v-flash # 智谱AI的视觉模型
     url: https://open.bigmodel.cn/api/paas/v4/
     api_key: 你的api_key
   QwenVLVLLM:
@@ -794,8 +796,8 @@ TTS:
     # 相关参数文档：https://www.volcengine.com/docs/6561/1329505
     # 音频输出配置（audio_params）- 用户可自定义添加火山引擎支持的任何音频参数
     audio_params:
-      speech_rate: 0  # 语速(-50~100)
-      loudness_rate: 0  # 音量(-50~100)
+      speech_rate: 0 # 语速(-50~100)
+      loudness_rate: 0 # 音量(-50~100)
       # 多情感音色参数，注意：当前仅部分音色支持设置情感。
       # 相关音色列表：https://www.volcengine.com/docs/6561/1257544
       # emotion: "neutral"  # 情感类型（仅部分音色支持）：neutral、happy、sad、angry、fearful、disgusted、surprised
@@ -803,7 +805,7 @@ TTS:
     # 高级文本处理配置（additions）- 用户可自定义添加火山引擎支持的任何高级参数
     additions:
       post_process:
-        pitch: 0  # 音高(-12~12)
+        pitch: 0 # 音高(-12~12)
       # aigc_metadata: {}  # AIGC元数据配置
       # cache_config: {}  # 缓存配置
     # 混音控制配置（mix_speaker）- 多音色混合（仅 TTS 1.0）
@@ -835,12 +837,12 @@ TTS:
     # 相关参数文档：https://www.volcengine.com/docs/6561/1329505
     # 音频输出配置（audio_params）- 用户可自定义添加火山引擎支持的任何音频参数
     audio_params:
-      speech_rate: 0  # 语速(-50~100)
-      loudness_rate: 0  # 音量(-50~100)
+      speech_rate: 0 # 语速(-50~100)
+      loudness_rate: 0 # 音量(-50~100)
     # 高级文本处理配置（additions）- 用户可自定义添加火山引擎支持的任何高级参数
     additions:
       post_process:
-        pitch: 0  # 音高(-12~12)
+        pitch: 0 # 音高(-12~12)
     # language: "中文"  # 指定输出语种,如:中文、英语、日语、韩语等,请根据所选音色支持的语言进行设置,不填则默认为中文
   CosyVoiceSiliconflow:
     type: siliconflow
@@ -885,8 +887,11 @@ TTS:
     output_dir: tmp/
     response_format: wav
     reference_id: null
-    reference_audio: ["config/assets/wakeup_words.wav",]
-    reference_text: ["哈啰啊，我是小智啦，声音好听的台湾女孩一枚，超开心认识你耶，最近在忙啥，别忘了给我来点有趣的料哦，我超爱听八卦的啦",]
+    reference_audio: ["config/assets/wakeup_words.wav"]
+    reference_text:
+      [
+        "你好呀，我是小包汤，会一直陪在你身边，开心时陪你闹，难过时抱抱你，有事我们一起慢慢解决。",
+      ]
     normalize: true
     max_new_tokens: 1024
     chunk_length: 200
@@ -948,7 +953,7 @@ TTS:
     if_sr: false
     # language: "中文"  # 指定输出语种,如:中文、英语、日语、韩语等,请根据所选音色支持的语言进行设置,不填则默认为中文
   MinimaxTTSHTTPStream:
-  # Minimax流式语音合成服务
+    # Minimax流式语音合成服务
     type: minimax_httpstream
     output_dir: tmp/
     group_id: 你的minimax平台groupID
@@ -1117,8 +1122,9 @@ TTS:
       return_download_link: true
       speed: 1
       stream: false
-    headers: # 自定义请求头
-      # Authorization: Bearer xxxx
+    headers:
+    # 自定义请求头
+    # Authorization: Bearer xxxx
     format: mp3 # 接口返回的音频格式
     output_dir: tmp/
     # language: "中文"  # 指定输出语种,如:中文、英语、日语、韩语等,请根据所选音色支持的语言进行设置,不填则默认为中文
@@ -1142,11 +1148,11 @@ TTS:
     #流式传输请参考 https://github.com/PaddlePaddle/PaddleSpeech/wiki/PaddleSpeech-Server-WebSocket-API
     type: paddle_speech
     protocol: websocket # protocol choices = ['websocket', 'http']
-    url: ws://127.0.0.1:8092/paddlespeech/tts/streaming  # TTS 服务的 URL 地址，指向本地服务器 [websocket默认ws://127.0.0.1:8092/paddlespeech/tts/streaming，http默认http://127.0.0.1:8090/paddlespeech/tts]
-    spk_id: 0  # 发音人 ID，0 通常表示默认的发音人
-    speed: 1.0  # 语速，1.0 表示正常语速，>1 表示加快，<1 表示减慢
-    volume: 1.0  # 音量，1.0 表示正常音量，>1 表示增大，<1 表示减小
-    save_path:   # 保存路径
+    url: ws://127.0.0.1:8092/paddlespeech/tts/streaming # TTS 服务的 URL 地址，指向本地服务器 [websocket默认ws://127.0.0.1:8092/paddlespeech/tts/streaming，http默认http://127.0.0.1:8090/paddlespeech/tts]
+    spk_id: 0 # 发音人 ID，0 通常表示默认的发音人
+    speed: 1.0 # 语速，1.0 表示正常语速，>1 表示加快，<1 表示减慢
+    volume: 1.0 # 音量，1.0 表示正常音量，>1 表示增大，<1 表示减小
+    save_path: # 保存路径
     # language: "中文"  # 指定输出语种,如:中文、英语、日语、韩语等,请根据所选音色支持的语言进行设置,不填则默认为中文
   IndexStreamTTS:
     # 基于Index-TTS-vLLM项目的TTS接口服务

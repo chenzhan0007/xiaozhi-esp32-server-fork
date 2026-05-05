@@ -15,6 +15,10 @@ import json
 import traceback
 from typing import Optional, Dict, Any
 
+from core.utils.power_memory_config import (
+    DEFAULT_POWER_MEMORY_SCORE_THRESHOLD,
+    DEFAULT_POWER_MEMORY_SEARCH_LIMIT,
+)
 from ..base import MemoryProviderBase, logger
 
 TAG = __name__
@@ -227,6 +231,14 @@ class MemoryProvider(MemoryProviderBase):
             return ""
 
         try:
+            search_limit = int(
+                self.config.get("search_limit")
+                or self.config.get("top_k")
+                or DEFAULT_POWER_MEMORY_SEARCH_LIMIT
+            )
+            score_threshold = float(
+                self.config.get("score_threshold") or DEFAULT_POWER_MEMORY_SCORE_THRESHOLD
+            )
             if not getattr(self, "role_id", None):
                 logger.bind(tag=TAG).debug("No role_id set, returning empty memory")
                 return ""
@@ -257,20 +269,27 @@ class MemoryProvider(MemoryProviderBase):
                     self.memory_client.search,
                     query=search_query,
                     user_id=self.role_id,
-                    limit=30
+                    limit=search_limit
                 )
             else:
                 # AsyncMemory uses async search
                 results = await self.memory_client.search(
                     query=search_query,
                     user_id=self.role_id,
-                    limit=30
+                    limit=search_limit
                 )
 
             if results and "results" in results:
                 # Format each memory entry with its update time
                 memories = []
                 for entry in results.get("results", []):
+                    score = entry.get("score")
+                    if score is not None:
+                        try:
+                            if float(score) < score_threshold:
+                                continue
+                        except (TypeError, ValueError):
+                            continue
                     # Get timestamp from updated_at or created_at
                     timestamp = ""
                     if "updated_at" in entry and entry["updated_at"]:
@@ -293,11 +312,14 @@ class MemoryProvider(MemoryProviderBase):
 
                     memory = entry.get("memory", "") or entry.get("content", "")
                     if memory:
+                        score_text = ""
+                        if isinstance(score, (int, float)):
+                            score_text = f" (score={score:.3f})"
                         if formatted_time:
                             # Store tuple of (timestamp, formatted_string) for sorting
-                            memories.append((timestamp, f"[{formatted_time}] {memory}"))
+                            memories.append((timestamp, f"[{formatted_time}] {memory}{score_text}"))
                         else:
-                            memories.append(("", memory))
+                            memories.append(("", f"{memory}{score_text}"))
 
                 # Sort by timestamp in descending order (newest first)
                 memories.sort(key=lambda x: x[0], reverse=True)

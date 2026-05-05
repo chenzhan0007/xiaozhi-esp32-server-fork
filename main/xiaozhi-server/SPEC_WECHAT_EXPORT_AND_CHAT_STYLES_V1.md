@@ -1,94 +1,92 @@
-# 微信聊天记录导入与聊天风格化 V1 方案
+# 微信聊天记录导入、长期记忆与聊天风格化方案
 
-本文记录第一期最终方案。目标是在不做模型微调的前提下，将微信聊天记录转成长期记忆和聊天风格配置，并接入当前 `xiaozhi-server + PowerMem` 体系。
+本文档描述当前 background 服务中的微信导入闭环实现。虽然文件名仍保留 V1，内容已按当前实现更新。
 
-## 目标
+## 核心结论
 
-- 支持用户上传微信聊天记录。
-- 从聊天记录中抽取长期记忆，写入 PowerMem。
-- 从目标人物聊天样本中生成聊天风格画像。
-- 运行时按 `device_id` 注入长期记忆和风格 prompt。
-- 后台系统可查看、管理导入记录、记忆条目和风格配置。
+- 微信聊天记录导入、解析、清洗、分段、LLM 抽取和业务库存储都在 `cz-cloud/backend` 的 `xiaozhi-manager` 模块完成。
+- 小智 Python 服务不处理微信原始文件，只负责实时聊天和 PowerMem 写入/检索。
+- 前端先把 CSV/JSON 文件上传到 COS，再把 `file_url` 提交给 background 导入接口。
+- 风格画像不再使用独立 `style_profiles` 表，而是合并到 `xiaozhi_device_configs`。
 
-## 第一期开关
+## 服务职责
 
-第一期只支持：
+### background / Admin Service
 
-- 导入格式：`WeChatMsg CSV`
-- 备选格式：`PyWxDump`，暂不实现，只保留后续扩展位。
-- 文本来源：微信文本消息。
-- 图片/截图 OCR：暂不实现，放到后续版本。
-- 风格控制：静态 `prompt_fragment` 注入，不做动态 Style Controller。
-- 记忆向量库：`PowerMem + SQLite`。
-- 业务存储：由外部后台服务负责，`xiaozhi-server` 不保存业务表。
+- 接收 COS 文件 URL。
+- 下载 WeChatMsg CSV 或 wechat-exporter JSON。
+- 解析为统一标准消息。
+- 清洗、去噪、脱敏、去重。
+- 使用 3 天窗口、2 天步长分段。
+- 调用百炼 LLM 抽取长期记忆。
+- 调用百炼 LLM 生成风格画像。
+- 保存 `xiaozhi_memory_import_batches`、`xiaozhi_normalized_messages`、`xiaozhi_memory_items`。
+- 更新 `xiaozhi_device_configs` 中的当前生效风格配置。
+- 可选调用小智 Python 服务写入 PowerMem。
 
-## 责任边界
+### xiaozhi Python / Chat Service
 
-### 外部后台服务
+- 负责 WebSocket 实时语音聊天。
+- 负责 ASR / LLM / TTS。
+- 负责 PowerMem 写入和搜索。
+- 运行时调用 background 的 runtime config 接口获取当前设备配置。
+- 将实时聊天会话和消息上报给 background。
 
-负责：
+## 身份模型
 
-- Web 上传入口。
-- WeChatMsg CSV 解析。
-- 消息清洗和标准化。
-- 聊天记录分段。
-- 调用 LLM 抽取长期记忆。
-- 调用 LLM 生成风格画像。
-- 保存导入批次、记忆条目、风格画像。
-- 提供后台管理页面。
+第一阶段统一使用 `device_id`：
 
-### xiaozhi-server
+```text
+硬件设备：device_id = 固件上报 device-id
+Web 测试端：用户手动输入 device_id
+PowerMem：user_id = device_id
+后台数据：按 device_id 聚合
+运行时配置：每个 device_id 一条 xiaozhi_device_configs
+```
 
-负责：
+## 支持格式
 
-- 提供 PowerMem 写入接口。
-- 提供 PowerMem 搜索接口。
-- 运行时按 `device_id` 使用长期记忆。
-- 运行时按 `device_id` 注入风格 prompt。
-- 保持原有 WebSocket 语音聊天链路。
-
-## 输入格式
-
-第一期只实现一个导入适配器：
+当前支持：
 
 ```text
 wechatmsg_csv_v1
+wechat_exporter_json_v1
 ```
 
-用户通过 WeChatMsg 导出 CSV 后，在 Web 后台上传。
-
-上传时需要填写：
+暂不支持：
 
 ```text
-device_id
-source_type = wechatmsg_csv_v1
-user_name
-target_person_name
-file
+截图 OCR
+语音消息转写
+动态 Style Controller
+LoRA / SFT 微调
+云端向量数据库
 ```
 
 ## 标准消息结构
 
-所有导入格式必须先转换为统一 messages。
+不同导出格式会统一成标准消息，并保存到 `xiaozhi_normalized_messages`：
 
 ```json
 {
   "message_id": "wx_000001",
+  "import_batch_id": "wechat_xxx",
   "device_id": "device_xxx",
   "conversation_id": "contact_or_group_id",
   "timestamp": "2025-01-18T21:35:22+08:00",
   "sender_name": "张三",
-  "role": "user",
+  "role": "target",
   "msg_type": "text",
   "content": "清洗后的文本",
   "raw_content": "原始文本",
   "source": "wechat",
-  "export_tool": "WeChatMsg",
-  "import_batch_id": "batch_xxx"
+  "metadata": {
+    "export_tool": "WeChatMsg"
+  }
 }
 ```
 
-`role` 取值：
+`role`：
 
 ```text
 user      用户自己
@@ -99,27 +97,24 @@ system    系统消息
 
 ## 清洗规则
 
-导入前需要过滤或规范化：
+background 会执行：
 
-- 撤回提示、系统通知。
-- 空消息、纯空白、乱码。
-- 无语义占位符，如 `[图片]`、`[视频]`、`[文件]`。
-- 重复消息。
-- 低价值单字消息，如单独的“嗯”“哦”“好”，可用于风格统计，但不直接进入记忆抽取。
-- 链接保留标题和域名，删除追踪参数。
-- 高敏感信息按需脱敏，如手机号、证件号、银行卡、精确住址、公司敏感信息。
+- 删除撤回提示、系统通知。
+- 删除空消息、重复消息。
+- 删除纯媒体占位符，如 `[图片]`、`[视频]`、`[文件]`。
+- 过滤低价值单字短消息，如“嗯”“哦”“好”。
+- 删除 HTML 标签和零宽字符。
+- 脱敏手机号、证件号、长数字串。
 
 ## 分段策略
 
-第一期使用滑动时间窗口。
-
-配置：
+当前实现：
 
 ```text
 聊天日边界：凌晨 04:00
-窗口长度：3 个聊天日
-滑动步长：2 个聊天日
-重叠长度：1 个聊天日
+窗口长度：3 天
+滑动步长：2 天
+单 chunk 最大消息数：300
 ```
 
 示例：
@@ -130,29 +125,23 @@ chunk_2: 第 3 天 04:00 -> 第 6 天 04:00
 chunk_3: 第 5 天 04:00 -> 第 8 天 04:00
 ```
 
-额外限制：
-
-- 每个 chunk 最多 300 条消息。
-- 超过上限时按时间顺序拆成 subchunk。
-- chunk 之间有重叠，因此后续必须做语义去重。
-
 ## 记忆抽取
 
-记忆抽取使用 LLM。
-
-推荐模型：
+background 调用百炼 OpenAI 兼容接口，模型配置位于：
 
 ```text
-qwen3.5-flash
+backend/src/configs/alicloud.ts
 ```
 
-输入：
+使用：
 
 ```text
-清洗后的 chunk messages
+ALI_BAILIAN_API_KEY
+ALI_BAILIAN_OPENAI_BASE_URL
+xiaozhi-manager 内部默认模型 `qwen3.5-flash`
 ```
 
-输出 JSON 数组：
+LLM 输出会被解析为：
 
 ```json
 [
@@ -163,250 +152,250 @@ qwen3.5-flash
     "evidence_message_ids": ["wx_001", "wx_018"],
     "subject": "user",
     "related_person": "target_person",
-    "source": "wechat",
     "privacy_level": "private"
   }
 ]
 ```
 
-支持的 `memory_type`：
-
-```text
-profile
-preference
-relationship
-event
-emotion_pattern
-style
-user_instruction
-```
-
 过滤规则：
 
-- `confidence < 0.65` 不写入 PowerMem。
-- 无 evidence 的记忆不写入 PowerMem。
-- 明显一次性寒暄不写入 PowerMem。
-- 隐私风险过高的内容进入待审核，不自动写入。
+- `confidence < 0.65` 不写入。
+- 没有 `content` 不写入。
+- 没有 `evidence_message_ids` 不写入。
+- 按 `device_id + memory_type + subject + content` 去重。
 
-## 记忆去重与合并
-
-由于 chunk 有重叠，必须做去重。
-
-第一期规则：
-
-- 同一 `device_id`
-- 同一 `memory_type`
-- 语义相似或内容高度重复
-- 保留 confidence 更高、证据更多、时间范围更完整的一条
-
-可以先用 LLM 判断重复关系，也可以用 embedding 相似度做候选召回。
-
-## PowerMem 写入
-
-外部后台服务完成记忆抽取后，调用 `xiaozhi-server` 写入 PowerMem。
-
-计划接口：
-
-```text
-POST /api/memory/import-items
-GET  /api/memory/search?device_id=xxx&q=xxx
-```
-
-`import-items` 输入：
-
-```json
-{
-  "device_id": "device_xxx",
-  "import_batch_id": "batch_xxx",
-  "items": [
-    {
-      "content": "用户疲惫时更希望被简短陪伴，而不是立刻收到大量建议。",
-      "memory_type": "preference",
-      "confidence": 0.86,
-      "source": "wechat",
-      "evidence_message_ids": ["wx_001", "wx_018"]
-    }
-  ]
-}
-```
-
-PowerMem `user_id` 使用：
-
-```text
-device_id
-```
-
-## 业务存储
-
-第一期业务数据由外部后台服务保存。
-
-建议表：
-
-```text
-memory_import_batches:
-  id
-  device_id
-  source_type
-  file_name
-  status
-  total_messages
-  total_chunks
-  total_memory_items
-  created_at
-  updated_at
-
-memory_items:
-  id
-  device_id
-  content
-  memory_type
-  confidence
-  source
-  evidence_message_ids
-  import_batch_id
-  powermem_memory_id
-  status
-  created_at
-  updated_at
-  deleted_at
-```
-
-`status` 取值：
-
-```text
-active
-disabled
-deleted
-pending_review
-```
-
-后台全量列表查询业务库；运行时召回查询 PowerMem。
+最终保存到 `xiaozhi_memory_items`。
 
 ## 风格抽取
 
-风格抽取与记忆抽取分开处理。
+风格抽取只分析 `role=target` 且 `msg_type=text` 的消息，最多取前 800 条样本。
 
-模块：
-
-```text
-MemoryExtractor
-StyleExtractor
-```
-
-风格抽取只分析 `role=target` 的消息。
-
-推荐模型：
-
-```text
-qwen3.5-flash
-```
-
-输出：
+LLM 输出：
 
 ```json
 {
   "profile_json": {
-    "tone": ["自然", "熟人感", "轻微调侃"],
+    "tone": ["自然", "熟人感"],
     "sentence_length": "short_to_medium",
-    "question_frequency": 0.25,
-    "humor": 0.35,
-    "directness": 0.55,
     "comfort_style": "先接住情绪，少分析，不连续追问"
   },
-  "prompt_fragment": "和用户说话时保持熟人感，句子偏短，语气自然，不要像客服。用户低落时先陪伴，不急于分析，不连续追问。可以轻微调侃，但不要过度热情。"
+  "prompt_fragment": "和用户说话时保持熟人感，句子偏短，语气自然。"
 }
 ```
 
-## 风格存储
-
-风格配置由外部后台服务保存。
-
-建议表：
+保存位置：
 
 ```text
-style_profiles:
-  id
-  device_id
-  target_person_name
-  profile_json
-  prompt_fragment
-  version
-  status
-  created_at
-  updated_at
+xiaozhi_device_configs.style_prompt_fragment
+xiaozhi_device_configs.style_profile_json
+xiaozhi_device_configs.style_import_batch_id
+xiaozhi_device_configs.style_updated_at
 ```
-
-第一期只使用 `prompt_fragment` 注入运行时 prompt。
-`profile_json` 用于后台展示和后续动态风格控制。
 
 ## 用户长期指令
 
-用户后续提出的长期要求不要直接写入 `style_profile.prompt_fragment`。
+用户后续提出的长期要求不要混入风格画像，应保存到：
+
+```text
+xiaozhi_device_configs.user_instructions
+```
 
 示例：
 
-```text
-以后每次对话你都要先叫我的名字。
-以后回答尽量短一点。
-以后不要叫我宝宝。
+```json
+[
+  {
+    "content": "每次回复开头先叫我的名字。",
+    "priority": "high",
+    "source": "manual",
+    "status": "active"
+  }
+]
 ```
 
-这类内容应作为独立长期记忆保存：
+## 导入接口
+
+所有接口都遵循当前项目规范：
+
+```text
+POST
+RequestResType<T>
+/xiaozhi-manager
+```
+
+微信导入入口：
+
+```text
+POST /xiaozhi-manager/memory/wechat-import/import
+```
+
+请求：
 
 ```json
 {
-  "memory_type": "user_instruction",
-  "content": "用户希望每次对话开头先称呼他的名字。",
-  "priority": "high"
+  "device_id": "device_xxx",
+  "user_name": "我",
+  "target_person_name": "张三",
+  "source_type": "wechatmsg_csv_v1",
+  "file_url": "https://cos.example.com/wechat.csv",
+  "file_name": "wechat.csv"
 }
 ```
 
-运行时需要同时注入：
+响应：
 
-```text
-base prompt
-+ style_profile.prompt_fragment
-+ user_instruction memories
-+ PowerMem 相关记忆
-+ 当前会话上下文
+```json
+{
+  "code": 200,
+  "data": {
+    "import_batch_id": "wechat_xxx",
+    "status": "processing"
+  }
+}
 ```
 
-## 运行时注入
-
-`xiaozhi-server` 后续需要支持按 `device_id` 获取风格 prompt。
-
-运行时 prompt 组成：
+## 导入流程
 
 ```text
-系统基础 prompt
-+ 设备级 style prompt_fragment
-+ PowerMem 检索结果
-+ 当前连接内上下文
-+ 当前用户输入
+前端上传 CSV/JSON 到 COS
+  -> 前端把 file_url 提交给 background
+  -> background 创建 xiaozhi_memory_import_batches
+  -> background 立即返回 import_batch_id/status=processing
+  -> background 异步下载文件
+  -> background 解析、清洗、保存 xiaozhi_normalized_messages
+  -> background 分段
+  -> background 调百炼 LLM 抽取 xiaozhi_memory_items
+  -> background 可选调用 Chat Service 写入 PowerMem
+  -> background 回写 powermem_memory_id
+  -> background 调百炼 LLM 生成风格画像
+  -> background 更新 xiaozhi_device_configs
 ```
 
-第一期可以先通过配置或外部接口获取 `prompt_fragment`。
-后续再做动态 Style Controller。
+## 运行时聊天流程
 
-## 第一期开工范围
+```text
+设备/Web 连接 Chat Service
+  -> Chat Service 获取 device_id
+  -> Chat Service 调 background /xiaozhi-manager/devices/get-runtime-config
+  -> Chat Service 注入 base_prompt/style_prompt_fragment/user_instructions
+  -> Chat Service 搜索 PowerMem
+  -> Chat Service 调 LLM/TTS
+  -> Chat Service 上报会话和消息到 background
+```
 
-第一期实现：
+## 实时会话长期记忆抽取
 
-- WeChatMsg CSV 上传和解析。
-- 标准化 messages。
-- 3 天窗口 + 1 天重叠分段。
-- LLM 抽取 memory items。
-- LLM 生成 style profile。
-- 业务库存储 import batch、memory items、style profile。
-- 调用 `xiaozhi-server` 写入 PowerMem。
-- 运行时注入 style prompt。
+微信导入只是离线资料导入的一种来源。实时聊天本身也会持续产生高价值长期记忆。
 
-第一期不做：
+第一性原则上，长期记忆应该以 background 业务库为真相源：
 
-- 截图 OCR。
-- 多导出格式兼容。
-- LoRA / SFT 微调。
-- 动态 Style Controller。
-- 复杂场景识别。
-- 自动持续更新 style profile。
-- PowerMem 云端向量库迁移。
+- background 已经保存完整会话和消息。
+- 后台管理、编辑、删除、审核都发生在 background。
+- 记忆抽取规则应该和微信导入共用同一套分类、过滤、去重逻辑。
+- Chat Service 的实时链路应该尽量轻，不应把 LLM 记忆抽取放在每轮对话主路径上。
+
+因此实时聊天的推荐链路是：
+
+```text
+Chat Service 建立 WebSocket
+  -> background 创建 xiaozhi_chat_sessions
+用户输入
+  -> Chat Service 上报 xiaozhi_chat_messages(role=user)
+助手回复完成
+  -> Chat Service 上报 xiaozhi_chat_messages(role=assistant)
+会话结束
+  -> Chat Service 结束 xiaozhi_chat_sessions
+  -> background 异步读取该 session 的完整消息
+  -> background 调百炼 LLM 抽取 memory_items
+  -> background 写入 xiaozhi_memory_items
+  -> background 调 Chat Service /api/memory/import-items 写入 PowerMem
+  -> background 回写 powermem_memory_id
+```
+
+不建议 Chat Service 直接抽取长期记忆：
+
+- 它会增加实时响应路径压力。
+- 直接写 PowerMem 会绕过 background 的业务表，后续后台无法完整治理。
+- 微信导入和实时会话会产生两套抽取逻辑，容易漂移。
+
+### 会话记忆导入接口
+
+background 已实现：
+
+```text
+POST /xiaozhi-manager/memory/session-import/import
+```
+
+请求：
+
+```json
+{
+  "device_id": "device_xxx",
+  "session_id": "session_uuid"
+}
+```
+
+响应：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "import_batch_id": "session_xxx",
+    "status": "processing"
+  }
+}
+```
+
+该接口会创建 `xiaozhi_memory_import_batches`，并使用：
+
+```text
+source_type = chat_session_v1
+```
+
+### Chat Service 接口职责
+
+Chat Service 需要保留或补充以下能力：
+
+```text
+POST /api/memory/import-items
+GET  /api/memory/search?device_id=xxx&q=xxx
+POST /api/memory/rebuild
+```
+
+其中：
+
+- `import-items`：只接收 background 已抽取好的记忆并写入 PowerMem。
+- `search`：运行时召回和后台调试召回使用。
+- `clear`：清空某个 device_id 在 Runtime PowerMem 中的全部记忆。
+- `rebuild`：从 background 的业务库重建某个 device_id 的 PowerMem 索引。
+
+Chat Service 作为客户端还需要调用 background：
+
+```text
+POST /xiaozhi-manager/devices/get-runtime-config
+POST /xiaozhi-manager/chat/sessions/create
+POST /xiaozhi-manager/chat/sessions/end
+POST /xiaozhi-manager/chat/messages/create
+POST /xiaozhi-manager/chat/messages/batch
+```
+
+## 相关表
+
+当前表名：
+
+```text
+xiaozhi_devices
+xiaozhi_chat_sessions
+xiaozhi_chat_messages
+xiaozhi_memory_import_batches
+xiaozhi_normalized_messages
+xiaozhi_memory_items
+xiaozhi_device_configs
+```
+
+不再使用：
+
+```text
+xiaozhi_style_profiles
+```

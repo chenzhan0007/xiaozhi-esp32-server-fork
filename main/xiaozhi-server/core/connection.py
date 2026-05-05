@@ -39,6 +39,7 @@ from core.providers.tts.dto.dto import ContentType, TTSMessageDTO, SentenceType
 from config.logger import setup_logging, build_module_string, create_connection_logger
 from config.manage_api_client import DeviceNotFoundException, DeviceBindException, generate_and_save_chat_title
 from core.utils.prompt_manager import PromptManager
+from core.services.xiaozhi_manager_client import XiaozhiManagerClient
 from core.utils.voiceprint_provider import VoiceprintProvider
 from core.utils.util import get_system_error_response
 from core.utils import textUtils
@@ -101,6 +102,9 @@ class ConnectionHandler:
         self.session_id = str(uuid.uuid4())
         self.logger = setup_logging()
         self.server = server  # 保存server实例的引用
+        self.xiaozhi_manager = XiaozhiManagerClient(self.config, self.logger)
+        self.runtime_config = {}
+        self.chat_message_sequence = 0
 
         self.need_bind = False  # 是否需要绑定设备
         self.bind_completed_event = asyncio.Event()
@@ -236,6 +240,8 @@ class ConnectionHandler:
             if self.conn_from_mqtt_gateway:
                 self.logger.bind(tag=TAG).info("连接来自:MQTT网关")
 
+            await self._notify_session_start()
+
             # 初始化活动时间戳
             self.first_activity_time = time.time() * 1000
             self.last_activity_time = time.time() * 1000
@@ -282,8 +288,8 @@ class ConnectionHandler:
     async def _save_and_close(self, ws):
         """保存记忆并关闭连接"""
         try:
-            # 守护线程1：独立生成标题（不依赖记忆模型）
-            if self.session_id:
+            # 仅在接入原 manager-api 时生成标题；独立后台管理服务不走该接口。
+            if self.session_id and self.read_config_from_api:
                 def generate_title_task():
                     try:
                         loop = asyncio.new_event_loop()
@@ -301,8 +307,8 @@ class ConnectionHandler:
 
                 threading.Thread(target=generate_title_task, daemon=True).start()
 
-            # 守护线程2：走老流程记忆保存（仅记忆，不含标题）
-            if self.memory:
+            # 独立后台管理服务接管会话级长期记忆抽取，避免直接把整段对话写入PowerMem。
+            if self.memory and not self.xiaozhi_manager.enabled:
                 # 使用线程池异步保存记忆
                 def save_memory_task():
                     try:
@@ -324,6 +330,7 @@ class ConnectionHandler:
 
                 # 启动线程保存记忆，不等待完成
                 threading.Thread(target=save_memory_task, daemon=True).start()
+            await self._notify_session_end()
         except Exception as e:
             self.logger.bind(tag=TAG).error(f"保存记忆失败: {e}")
         finally:
@@ -334,6 +341,51 @@ class ConnectionHandler:
                 self.logger.bind(tag=TAG).error(
                     f"保存记忆后关闭连接失败: {close_error}"
                 )
+
+    async def _notify_session_start(self):
+        if not self.xiaozhi_manager.enabled or not self.device_id:
+            return
+        source = "web" if self.headers.get("client-id") == "web_test_client" else "device"
+        if self.conn_from_mqtt_gateway:
+            source = "mqtt"
+        await self.xiaozhi_manager.upsert_device(self.device_id)
+        await self.xiaozhi_manager.create_chat_session(
+            session_id=self.session_id,
+            device_id=self.device_id,
+            source=source,
+            client_id=self.headers.get("client-id"),
+        )
+
+    async def _notify_session_end(self):
+        if not self.xiaozhi_manager.enabled or not self.device_id:
+            return
+        status = "interrupted" if self.client_abort else "completed"
+        await self.xiaozhi_manager.end_chat_session(self.session_id, status=status)
+        await self.xiaozhi_manager.import_session_memory(self.device_id, self.session_id)
+
+    def _report_chat_message(self, role: str, content: str, status: str = "completed", metadata=None):
+        if not self.xiaozhi_manager.enabled or not self.device_id or not content:
+            return
+        if role == "assistant":
+            content = textUtils.check_emoji(content).strip()
+            if not content:
+                return
+        self.chat_message_sequence += 1
+        message_id = f"{self.session_id}_{self.chat_message_sequence:06d}_{role}"
+        self.xiaozhi_manager.run_from_thread(
+            self.loop,
+            self.xiaozhi_manager.create_chat_message(
+                message_id=message_id,
+                session_id=self.session_id,
+                device_id=self.device_id,
+                role=role,
+                content=content,
+                sequence_no=self.chat_message_sequence,
+                status=status,
+                metadata=metadata or {},
+            ),
+            timeout=5,
+        )
 
     async def _discard_message_with_bind_prompt(self):
         """丢弃消息并检查是否需要播放绑定提示"""
@@ -625,6 +677,7 @@ class ConnectionHandler:
     async def _initialize_private_config_async(self):
         """从接口异步获取差异化配置（异步版本，不阻塞主循环）"""
         if not self.read_config_from_api:
+            await self._initialize_runtime_config_from_manager()
             self.need_bind = False
             self.bind_completed_event.set()
             return
@@ -756,6 +809,184 @@ class ConnectionHandler:
         if modules.get("memory", None) is not None:
             self.memory = modules["memory"]
 
+    async def _initialize_runtime_config_from_manager(self):
+        if not self.xiaozhi_manager.enabled or not self.device_id:
+            return
+        runtime_config = await self.xiaozhi_manager.get_runtime_config(self.device_id)
+        if not self._has_runtime_config(runtime_config):
+            default_runtime_config = self._build_default_runtime_config()
+            runtime_config = await self.xiaozhi_manager.update_runtime_config(
+                default_runtime_config
+            ) or default_runtime_config
+        else:
+            default_runtime_config = self._build_default_runtime_config()
+            merged_runtime_config, should_update = self._merge_runtime_config_defaults(
+                runtime_config, default_runtime_config
+            )
+            if should_update:
+                runtime_config = await self.xiaozhi_manager.update_runtime_config(
+                    merged_runtime_config
+                ) or merged_runtime_config
+        if not runtime_config:
+            return
+        self.runtime_config = runtime_config
+        self.config["runtime_config"] = runtime_config
+        memory_config = runtime_config.get("memory_config")
+        if isinstance(memory_config, dict):
+            selected_memory = self.config.get("selected_module", {}).get("Memory")
+            if selected_memory and selected_memory in self.config.get("Memory", {}):
+                self.config["Memory"][selected_memory].update(memory_config)
+        max_dialogue_turns = runtime_config.get("max_dialogue_turns")
+        if max_dialogue_turns:
+            self.config["max_dialogue_turns"] = int(max_dialogue_turns)
+        base_prompt = runtime_config.get("base_prompt")
+        if base_prompt:
+            self.config["prompt"] = base_prompt
+        self.logger.bind(tag=TAG).info(
+            f"已加载设备运行时配置: style={bool(runtime_config.get('style_prompt_fragment'))}, instructions={bool(runtime_config.get('user_instructions'))}"
+        )
+
+    def _has_runtime_config(self, runtime_config: Dict[str, Any]) -> bool:
+        if not isinstance(runtime_config, dict):
+            return False
+        fields = (
+            "base_prompt",
+            "style_prompt_fragment",
+            "user_instructions",
+            "model_config",
+            "tts_config",
+            "memory_config",
+            "max_dialogue_turns",
+            "ai_persona_name",
+            "ai_persona_identity",
+            "ai_persona_relationship_with_user",
+            "style_profile_json",
+        )
+        return any(runtime_config.get(field) for field in fields)
+
+    def _merge_runtime_config_defaults(
+        self, runtime_config: Dict[str, Any], default_runtime_config: Dict[str, Any]
+    ):
+        merged = dict(runtime_config or {})
+        should_update = False
+        default_only_fields = (
+            "base_prompt",
+            "model_config",
+            "tts_config",
+            "memory_config",
+            "max_dialogue_turns",
+        )
+        for field in default_only_fields:
+            if not merged.get(field) and default_runtime_config.get(field):
+                merged[field] = default_runtime_config[field]
+                should_update = True
+
+        # 默认身份卡只补空字段，不覆盖导入链路已经抽取出的个性化身份卡。
+        for field in (
+            "ai_persona_name",
+            "ai_persona_identity",
+            "ai_persona_relationship_with_user",
+        ):
+            if not merged.get(field) and default_runtime_config.get(field):
+                merged[field] = default_runtime_config[field]
+                should_update = True
+
+        if not isinstance(merged.get("style_profile_json"), dict):
+            merged["style_profile_json"] = default_runtime_config.get(
+                "style_profile_json", {}
+            )
+            should_update = True
+        else:
+            default_profile = default_runtime_config.get("style_profile_json", {})
+            profile = dict(merged.get("style_profile_json") or {})
+            for key, value in default_profile.items():
+                if not profile.get(key):
+                    profile[key] = value
+                    should_update = True
+            merged["style_profile_json"] = profile
+
+        return merged, should_update
+
+    def _build_default_runtime_config(self) -> Dict[str, Any]:
+        selected_module = self.config.get("selected_module", {}) or {}
+        selected_llm = selected_module.get("LLM")
+        selected_tts = selected_module.get("TTS")
+        selected_memory = selected_module.get("Memory")
+
+        llm_config = self._build_default_model_config(selected_llm)
+        tts_config = self._build_default_tts_config(selected_tts)
+        memory_config = self._build_default_memory_config(selected_memory)
+
+        return {
+            "device_id": self.device_id,
+            "base_prompt": self.config.get("prompt"),
+            "style_prompt_fragment": "",
+            "user_instructions": [],
+            "model_config": llm_config,
+            "tts_config": tts_config,
+            "memory_config": memory_config,
+            "max_dialogue_turns": int(self.config.get("max_dialogue_turns") or 50),
+            "ai_persona_name": "小包汤",
+            "ai_persona_identity": "长期陪伴在用户身边的温暖可靠型 AI 语音助手",
+            "ai_persona_relationship_with_user": "像男朋友、哥哥和亲密伙伴一样守护、理解、支持用户",
+            "style_profile_json": {
+                "basic_info": {"name": "小包汤"},
+                "relationship_with_user": "像男朋友、哥哥和亲密伙伴一样守护、理解、支持用户",
+                "communication_style": {
+                    "warm": True,
+                    "reliable": True,
+                    "humorous": True,
+                    "companionship_first": True,
+                },
+                "companionship_strategy": {
+                    "happy": "陪她打闹、开玩笑、分享快乐",
+                    "sad": "先温柔安慰和共情，再慢慢陪她梳理",
+                    "problem_solving": "耐心听她说清楚，一起分析并给出可执行建议",
+                },
+                "boundaries": {},
+                "preferences": {},
+                "uncertain_or_stale_info": [],
+            },
+            "status": "active",
+        }
+
+    def _get_selected_config(self, group_name: str, selected_name: str):
+        group_config = self.config.get(group_name, {}) or {}
+        selected_config = group_config.get(selected_name, {}) if selected_name else {}
+        return selected_config if isinstance(selected_config, dict) else {}
+
+    def _build_default_model_config(self, selected_llm: str) -> Dict[str, Any]:
+        config = self._get_selected_config("LLM", selected_llm)
+        return {
+            "selected_module": selected_llm,
+            "model_name": config.get("model_name"),
+            "max_tokens": config.get("max_tokens"),
+            "temperature": config.get("temperature"),
+        }
+
+    def _build_default_tts_config(self, selected_tts: str) -> Dict[str, Any]:
+        config = self._get_selected_config("TTS", selected_tts)
+        return {
+            "selected_module": selected_tts,
+            "type": config.get("type"),
+            "model": config.get("model"),
+            "voice": config.get("voice"),
+        }
+
+    def _build_default_memory_config(self, selected_memory: str) -> Dict[str, Any]:
+        config = self._get_selected_config("Memory", selected_memory)
+        llm_config = config.get("llm", {}).get("config", {}) if isinstance(config.get("llm"), dict) else {}
+        embedder_config = config.get("embedder", {}).get("config", {}) if isinstance(config.get("embedder"), dict) else {}
+        return {
+            "selected_module": selected_memory,
+            "type": config.get("type"),
+            "enable_user_profile": bool(config.get("enable_user_profile", False)),
+            "llm_model": llm_config.get("model"),
+            "embedder_model": embedder_config.get("model"),
+            "top_k": config.get("top_k") or config.get("search_limit"),
+            "score_threshold": config.get("score_threshold"),
+        }
+
     def _initialize_memory(self):
         if self.memory is None:
             return
@@ -864,6 +1095,12 @@ class ConnectionHandler:
             current_sentence_id = str(uuid.uuid4().hex)
             self.sentence_id = current_sentence_id  # 更新共享属性
             self.dialogue.put(Message(role="user", content=query))
+            self._report_chat_message(
+                role="user",
+                content=query,
+                status="completed",
+                metadata={"sentence_id": current_sentence_id},
+            )
             self.tts.tts_text_queue.put(
                 TTSMessageDTO(
                     sentence_id=current_sentence_id,
@@ -909,14 +1146,14 @@ class ConnectionHandler:
                     force_reminder = True
 
             # 对话历史截断：防止历史过长导致模型"偷懒模式"扩散
-            # 当对话历史超过阈值时，保留最近的 10 轮对话
-            # max_dialogue_turns = 10
-            # if dialogue_length > max_dialogue_turns * 2:
-            #     removed = self.dialogue.trim_history(max_turns=max_dialogue_turns)
-            #     if removed > 0:
-            #         self.logger.bind(tag=TAG).info(
-            #             f"对话历史过长({dialogue_length}条)，已智能截断保留最近{max_dialogue_turns}轮，移除{removed}条消息"
-            #         )
+            # 当对话历史超过阈值时，保留最近 N 轮对话；N 由 device_configs.max_dialogue_turns 控制。
+            max_dialogue_turns = int(self.config.get("max_dialogue_turns") or 50)
+            if max_dialogue_turns > 0 and dialogue_length > max_dialogue_turns * 2:
+                removed = self.dialogue.trim_history(max_turns=max_dialogue_turns)
+                if removed > 0:
+                    self.logger.bind(tag=TAG).info(
+                        f"对话历史过长({dialogue_length}条)，已智能截断保留最近{max_dialogue_turns}轮，移除{removed}条消息"
+                    )
 
         # Define intent functions
         functions = None
@@ -1163,6 +1400,12 @@ class ConnectionHandler:
             text_buff = "".join(response_message)
             self.tts.store_tts_text(current_sentence_id, text_buff)
             self.dialogue.put(Message(role="assistant", content=text_buff))
+            self._report_chat_message(
+                role="assistant",
+                content=text_buff,
+                status="interrupted" if self.client_abort else "completed",
+                metadata={"sentence_id": current_sentence_id},
+            )
 
             # 更新工具调用统计：如果没有调用工具，增加计数
             if depth == 0 and not tool_call_flag:

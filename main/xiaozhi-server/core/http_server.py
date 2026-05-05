@@ -1,6 +1,7 @@
 import asyncio
 from aiohttp import web
 from config.logger import setup_logging
+from core.api.memory_handler import MemoryHandler
 from core.api.ota_handler import OTAHandler
 from core.api.vision_handler import VisionHandler
 
@@ -13,6 +14,7 @@ class SimpleHttpServer:
         self.logger = setup_logging()
         self.ota_handler = OTAHandler(config)
         self.vision_handler = VisionHandler(config)
+        self.memory_handler = MemoryHandler(config)
 
     def _get_websocket_url(self, local_ip: str, port: int) -> str:
         """获取websocket地址
@@ -72,6 +74,12 @@ class SimpleHttpServer:
                         web.options(
                             "/mcp/vision/explain", self.vision_handler.handle_options
                         ),
+                        web.post("/api/memory/import-items", self.memory_handler.import_items),
+                        web.options("/api/memory/import-items", self.memory_handler.handle_options),
+                        web.post("/api/memory/clear", self.memory_handler.clear),
+                        web.options("/api/memory/clear", self.memory_handler.handle_options),
+                        web.get("/api/memory/search", self.memory_handler.search),
+                        web.options("/api/memory/search", self.memory_handler.handle_options),
                     ]
                 )
 
